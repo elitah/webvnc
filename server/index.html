@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-cmn-Hans">
+<head>
+<title>测试</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=0">
+<meta http-equiv="Cache-Control" content="no-cache" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<link rel="stylesheet" href="/static/css/weui.min.css">
+<link rel="stylesheet" href="/static/css/jquery-weui.min.css">
+<style type="text/css">
+* {
+	margin: 0;
+	padding: 0;
+}
+
+canvas {
+	width: 33%;
+	border: 1px dashed #000;
+}
+
+.container {
+	margin: 0px auto;
+	width: 100%;
+	display: flex;
+	flex-wrap: wrap;
+}
+</style>
+</head>
+<body>
+<div id="app">
+	<div class="container">
+		<template v-for="item in list">
+			<canvas @click="load($event, item)"></canvas>
+		</template>
+	</div>
+</div>
+<script src="/static/js/jquery-1.12.4.min.js"></script>
+<script src="/static/js/jquery-weui.min.js"></script>
+<script src="/static/js/vue.min.js"></script>
+<script src="/static/js/axios.min.js"></script>
+<script src="/static/js/jsmpg.js"></script>
+<script>
+var INPUT_KEY = 0x0001,
+	INPUT_MOUSE_BUTTON = 0x0002,
+	INPUT_MOUSE_ABSOLUTE = 0x0004,
+	INPUT_MOUSE_RELATIVE = 0x0008;
+
+var KEY_DOWN = 0x01,
+	KEY_UP = 0x00,
+	MOUSE_1_DOWN = 0x0002,
+	MOUSE_1_UP = 0x0004,
+	MOUSE_2_DOWN = 0x0008,
+	MOUSE_2_UP = 0x0010;
+
+$(document).ready(function() {
+	//
+	new Vue({
+		el: '#app',
+		data () {
+			return {
+				list: [],
+
+				maps: new Map(),
+
+				keySend: null,
+
+				mouseDataBuffer: null,
+				mouseDataTypeFlags: null,
+				mouseDataCoords: null,
+			}
+		},
+		methods: {
+			//
+			load (e, target) {
+				//
+				var obj = this.maps[target];
+				//
+				if (!obj) {
+					//
+					var client = new WebSocket('ws://' + window.location.host + '/ws?key=' + encodeURIComponent(target));
+					//
+					client.onopen = () => {
+						//
+						var obj = this.maps[target];
+						//
+						if (obj) {
+							//
+							var player = new jsmpeg(obj.client, {
+								canvas: obj.canvas,
+								ondecodeframe: (player, canvas) => {
+									//
+									player.externalDecodeCallback = null;
+									//
+									if (canvas) {
+										//
+										canvas.oncontextmenu = () => {
+											//
+											return false;
+										};
+										//
+										canvas.addEventListener('mousemove', (ev) => {
+											//
+											this.keySend = client;
+											//
+											this.sendMouse(canvas, client, ev, null);
+										}, false);
+										//
+										canvas.addEventListener('mousedown', (ev) => {
+											//
+											this.sendMouse(canvas, client, ev, ev.button == 2 ? MOUSE_2_DOWN : MOUSE_1_DOWN);
+										}, false);
+										//
+										canvas.addEventListener('mouseup', (ev) => {
+											//
+											this.sendMouse(canvas, client, ev, ev.button == 2 ? MOUSE_2_UP : MOUSE_1_UP);
+										}, false);
+									}
+								},
+							});
+							//
+							obj.player = player;
+							//
+							client.onopen();
+						} else {
+							//
+							client.close();
+						}
+					}
+					//
+					client.onerror = () => {
+						//
+						console.log('onerror...............');
+					}
+					//
+					client.onclose = () => {
+						//
+						var obj = this.maps[target];
+						//
+						if (obj) {
+							//
+							if (obj.canvas) {
+								//
+								obj.canvas.style.display = 'none';
+							}
+							//
+							if (obj.player) {
+								//
+								obj.player.stop();
+							}
+						}
+						//
+						this.maps[target] = null;
+						//
+						console.log('onclose...............');
+					}
+					//
+					this.maps[target] = {
+						canvas: e.target,
+						client: client,
+						player: null,
+					};
+				}
+			},
+			sendMouse (canvas, client, ev, action) {
+				//
+				var type = 0;
+				var x, y;
+				//
+				if( action ) {
+					//
+					type |= INPUT_MOUSE_BUTTON;
+				}
+				//
+				if (true) {
+					//
+					type |= INPUT_MOUSE_ABSOLUTE;
+					//
+					var rect = canvas.getBoundingClientRect();
+					var scaleX = canvas.width / (rect.right-rect.left),
+						scaleY = canvas.height / (rect.bottom-rect.top);
+					//
+					var p = event.changedTouches ? ev.changedTouches[0] : ev;
+					var x = (p.clientX - rect.left) * scaleX,
+						y = (p.clientY - rect.top) * scaleY;
+				}
+				//
+				this.mouseDataTypeFlags[0] = type;
+				this.mouseDataTypeFlags[1] = (action || 0);
+				this.mouseDataCoords[0] = x;
+				this.mouseDataCoords[1] = y;
+				//
+				client.send(this.mouseDataBuffer);
+				//
+				ev.preventDefault();
+			},
+			sendKey (ev, action, key) {
+				//
+				if (this.keySend) {
+					//
+					this.keySend.send(new Uint16Array([INPUT_KEY, action, key]));
+				}
+				//
+				ev.preventDefault();
+			},
+		},
+		mounted () {
+			//
+			window.addEventListener('keydown', (ev) => {
+				//
+				this.sendKey(ev, KEY_DOWN, ev.keyCode);
+			}, false);
+			//
+			window.addEventListener('keyup', (ev) => {
+				//
+				this.sendKey(ev, KEY_UP, ev.keyCode);
+			}, false);
+			//
+			this.mouseDataBuffer = new ArrayBuffer(12);
+			this.mouseDataTypeFlags = new Uint16Array(this.mouseDataBuffer, 0);
+			this.mouseDataCoords = new Float32Array(this.mouseDataBuffer, 4);
+			//
+			axios.get('/list').then(response => {
+				//
+				if (response && response.data) {
+					//
+					this.list = response.data;
+				}
+			}).catch((err) => {
+				//
+				$.toast('发生错误', 'forbidden');
+				//
+				console.log(err);
+			});
+		},
+		destroyed () {
+			//
+		}
+	});
+});
+</script>
+</body>
+</html>
